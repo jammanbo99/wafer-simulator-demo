@@ -1,0 +1,5 @@
+node_modules/
+*.log
+wafer-conditions*.json
+.env
+.env.*
