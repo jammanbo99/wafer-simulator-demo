@@ -1,5 +1,5 @@
-export const defaults={radius:150,thickness:12,waferRadius:150,waferThickness:.775,warpage:.4,shape:'bowl',shapeAngle:0,shapeAnisotropy:.45,localX:45,localY:20,localSigma:35,localWeight:.45,tilt:0,lift:2,pinRadius:95,pinSize:2,ringWidth:8,ringHeight:1,connected:true,resolution:240,deep:{enabled:true,pattern:'Grid',width:3,depth:2,pitch:30,count:9,start:0,end:148},shallow:{enabled:true,pattern:'Concentric',width:1.5,depth:.5,pitch:15,count:9,start:12,end:145}};
-export function validate(c){let e=[];for(const k of ['radius','thickness','waferRadius','waferThickness','pinSize','ringWidth'])if(!(c[k]>0))e.push(k+' > 0 필요');if(c.waferRadius>c.radius)e.push('V1: wafer 반경 ≤ stage 반경 필요');if(c.pinRadius+c.pinSize>=c.waferRadius)e.push('Lift pin은 wafer 내부에 있어야 합니다');for(const k of ['deep','shallow']){const g=c[k];if(!g.enabled)continue;if(g.width<=0||g.depth<=0||g.depth>=c.thickness||g.pitch<=0||g.count<1||g.count>80||!Number.isInteger(g.count)||g.start<0||g.end<=g.start||g.end>c.radius)e.push(k+': 폭/깊이/피치/개수/반경 확인');}if(c.deep.enabled&&c.shallow.enabled&&c.deep.depth<c.shallow.depth)e.push('Deep 깊이는 Shallow 이상이어야 합니다');if(!Number.isFinite(c.warpage)||c.warpage<0)e.push('Warpage PV는 0 이상 필요');
+export const defaults={radius:150,thickness:12,waferRadius:150,waferThickness:.775,warpage:.4,shape:'bowl',shapeAngle:0,shapeAnisotropy:.45,localX:45,localY:20,localSigma:35,localWeight:.45,tilt:0,lift:2,pinContactMode:'auto',pinRadius:95,pinSize:2,ringWidth:8,ringHeight:1,connected:true,resolution:240,deep:{enabled:true,pattern:'Grid',width:3,depth:2,pitch:30,count:9,start:0,end:148},shallow:{enabled:true,pattern:'Concentric',width:1.5,depth:.5,pitch:15,count:9,start:12,end:145}};
+export function validate(c){let e=[];for(const k of ['radius','thickness','waferRadius','waferThickness','pinSize','ringWidth'])if(!(c[k]>0))e.push(k+' > 0 필요');if(c.waferRadius>c.radius)e.push('V1: wafer 반경 ≤ stage 반경 필요');if(!(c.pinRadius>0))e.push('3 Pin 배치 반경은 0보다 커야 합니다');if(!['auto','all3'].includes(c.pinContactMode))e.push('지원하지 않는 Pin 접촉 모드');if(c.pinRadius+c.pinSize>=c.waferRadius)e.push('Lift pin은 wafer 내부에 있어야 합니다');for(const k of ['deep','shallow']){const g=c[k];if(!g.enabled)continue;if(g.width<=0||g.depth<=0||g.depth>=c.thickness||g.pitch<=0||g.count<1||g.count>80||!Number.isInteger(g.count)||g.start<0||g.end<=g.start||g.end>c.radius)e.push(k+': 폭/깊이/피치/개수/반경 확인');}if(c.deep.enabled&&c.shallow.enabled&&c.deep.depth<c.shallow.depth)e.push('Deep 깊이는 Shallow 이상이어야 합니다');if(!Number.isFinite(c.warpage)||c.warpage<0)e.push('Warpage PV는 0 이상 필요');
 if(!['bowl','dome','saddle','elliptic','local','mixed'].includes(c.shape))e.push('지원하지 않는 wafer shape');
 if(!Number.isFinite(c.shapeAngle)||Math.abs(c.shapeAngle)>180)e.push('Shape 각도 -180~180° 필요');
 if(!Number.isFinite(c.shapeAnisotropy)||c.shapeAnisotropy<.1||c.shapeAnisotropy>1)e.push('비등방 비율은 0.1~1');
@@ -45,6 +45,49 @@ export function warp(x,y,c){
   return height+c.tilt*x/c.waferRadius;
 }
 export function landWidth(g,r){return g.pattern==='Radial'?2*r*Math.sin(Math.PI/g.count)-g.width:g.pitch-g.width;}
-export function calculate(c,n=c.resolution){const step=2*c.radius/n,area=step*step,cells=[];let total=0,land=0,volume=0,minLand=Infinity,minAll=Infinity,minWarp=Infinity,maxWarp=-Infinity,contact=null;for(let i=0;i<n;i++)for(let j=0;j<n;j++){const x=-c.radius+(i+.5)*step,y=-c.radius+(j+.5)*step,d=depthAt(x,y,c);if(d===null)continue;total+=area;if(d===0)land+=area;volume+=d*area;const inWafer=Math.hypot(x,y)<=c.waferRadius,w=warp(x,y,c);if(inWafer){minWarp=Math.min(minWarp,w);maxWarp=Math.max(maxWarp,w);minAll=Math.min(minAll,w+d);if(d===0&&w<minLand){minLand=w;contact={x,y};}}cells.push({x,y,d,w,inWafer});}let pinLimit=-Infinity;for(let k=0;k<3;k++){let a=k*2*Math.PI/3;pinLimit=Math.max(pinLimit,c.lift-warp(c.pinRadius*Math.cos(a),c.pinRadius*Math.sin(a),c));}const offset=pinLimit;let minGap=Infinity,interference=0;for(const p of cells){p.gap=p.w+offset+p.d;if(p.inWafer){minGap=Math.min(minGap,p.gap);if(p.gap< -1e-6)interference++;}}return{step,cells,total,land,volume,groove:total-land,waferPV:maxWarp-minWarp,minLand,contact,offset,minGap,interference,firstLandOffset:-minLand,firstSurfaceOffset:-minAll};}
+// Ideal, rigid three-point seating: adjust the wafer reference plane (Z, X/Y tilt)
+// until the warped underside intersects all three equal-height pin top centers.
+// No wafer deformation, pin deflection, contact force or dynamic trajectory is modeled.
+export function pinPositions(c){
+  return Array.from({length:3},(_,i)=>{const angle=i*2*Math.PI/3;return{x:c.pinRadius*Math.cos(angle),y:c.pinRadius*Math.sin(angle)};});
+}
+export function pinSupportPlane(c){
+  const pins=pinPositions(c);
+  const targets=pins.map(p=>c.lift-warp(p.x,p.y,c));
+  if(c.pinContactMode!=='all3')return{offset:Math.max(...targets),tiltX:0,tiltY:0};
+  const offset=targets.reduce((a,b)=>a+b,0)/3;
+  const r2=c.pinRadius*c.pinRadius;
+  const tiltX=2*targets.reduce((a,t,i)=>a+t*pins[i].x,0)/(3*r2);
+  const tiltY=2*targets.reduce((a,t,i)=>a+t*pins[i].y,0)/(3*r2);
+  return{offset,tiltX,tiltY};
+}
+export function waferBottomAt(x,y,c,plane=pinSupportPlane(c)){
+  return warp(x,y,c)+plane.offset+plane.tiltX*x+plane.tiltY*y;
+}
+export function calculate(c,n=c.resolution){
+  const plane=pinSupportPlane(c),pins=pinPositions(c);
+  const pinGaps=pins.map(p=>waferBottomAt(p.x,p.y,c,plane)-c.lift);
+  const pinContactCount=pinGaps.filter(g=>Math.abs(g)<=1e-6).length;
+  const step=2*c.radius/n,area=step*step,cells=[];
+  let total=0,land=0,volume=0,minLand=Infinity,minAll=Infinity,minWarp=Infinity,maxWarp=-Infinity,contact=null;
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+    const x=-c.radius+(i+.5)*step,y=-c.radius+(j+.5)*step,d=depthAt(x,y,c);
+    if(d===null)continue;
+    total+=area;if(d===0)land+=area;volume+=d*area;
+    const inWafer=Math.hypot(x,y)<=c.waferRadius,w=warp(x,y,c);
+    const bottom=waferBottomAt(x,y,c,plane);
+    if(inWafer){
+      minWarp=Math.min(minWarp,w);maxWarp=Math.max(maxWarp,w);
+      minAll=Math.min(minAll,bottom-plane.offset+d);
+      if(d===0&&bottom-plane.offset<minLand){minLand=bottom-plane.offset;contact={x,y};}
+    }
+    cells.push({x,y,d,w,inWafer,gap:bottom+d});
+  }
+  let minGap=Infinity,interference=0;
+  for(const p of cells)if(p.inWafer){minGap=Math.min(minGap,p.gap);if(p.gap< -1e-6)interference++;}
+  return{step,cells,total,land,volume,groove:total-land,waferPV:maxWarp-minWarp,
+    minLand,contact,offset:plane.offset,tiltX:plane.tiltX,tiltY:plane.tiltY,
+    pinGaps,pinContactCount,pins,minGap,interference,firstLandOffset:-minLand,firstSurfaceOffset:-minAll};
+}
 // V2 extension boundary: pressure, gas flow and elastic/contact force solvers receive geometry; V1 never fabricates these outputs.
 export const physicsModels={pressure:null,gasFlow:null,elasticContact:null};
