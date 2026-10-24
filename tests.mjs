@@ -13,7 +13,7 @@ test('saddle signs',()=>{let c=base();c.shape='saddle';assert.ok(warp(10,0,c)>0)
 
 test('all extended shapes produce finite warp and expected sampled PV',()=>{
   for(const shape of ['bowl','dome','saddle','elliptic','local','mixed']){
-    let c=base();c.shape=shape;c.warpage=.5;
+    let c=base();c.shape=shape;c.warpage=.5;c.localX=4;c.localY=3;c.localSigma=6;
     const r=calculate(c,160);
     assert.ok(Number.isFinite(r.waferPV)&&r.waferPV>.43&&r.waferPV<.55,shape+' sampled PV='+r.waferPV);
     assert.ok(Number.isFinite(r.minGap),shape);
