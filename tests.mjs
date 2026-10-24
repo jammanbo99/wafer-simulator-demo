@@ -10,3 +10,26 @@ test('depth doubling doubles union volume',()=>{let c=structuredClone(defaults),
 test('invalid dimensions rejected',()=>{let c=base();c.deep.enabled=true;c.deep.depth=c.thickness;assert.ok(validate(c).length);});
 test('saddle signs',()=>{let c=base();c.shape='saddle';assert.ok(warp(10,0,c)>0);assert.ok(warp(0,10,c)<0);});
 
+
+test('all extended shapes produce finite warp and expected sampled PV',()=>{
+  for(const shape of ['bowl','dome','saddle','elliptic','local','mixed']){
+    let c=base();c.shape=shape;c.warpage=.5;c.localX=4;c.localY=3;c.localSigma=6;
+    const r=calculate(c,160);
+    assert.ok(Number.isFinite(r.waferPV)&&r.waferPV>.43&&r.waferPV<.55,shape+' sampled PV='+r.waferPV);
+    assert.ok(Number.isFinite(r.minGap),shape);
+  }
+});
+test('saddle rotation swaps principal height directions',()=>{
+  let c=base();c.shape='saddle';c.shapeAngle=0;const a=warp(10,0,c);
+  c.shapeAngle=90;const b=warp(10,0,c);
+  assert.ok(a>0&&b<0);
+});
+test('local hump peaks at user-specified location',()=>{
+  let c=base();c.shape='local';c.localX=4;c.localY=-3;c.localSigma=5;
+  assert.ok(warp(4,-3,c)>warp(0,0,c));
+  assert.ok(warp(4,-3,c)>warp(-8,7,c));
+});
+test('bad local center or width rejected',()=>{
+  let c=base();c.shape='local';c.localX=100;assert.ok(validate(c).length);
+  c.localX=0;c.localSigma=0;assert.ok(validate(c).length);
+});
