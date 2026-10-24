@@ -33,3 +33,38 @@ test('bad local center or width rejected',()=>{
   let c=base();c.shape='local';c.localX=100;assert.ok(validate(c).length);
   c.localX=0;c.localSigma=0;assert.ok(validate(c).length);
 });
+
+test('forced 3-pin seating aligns all pin heights across every profile',()=>{
+  for(const shape of ['bowl','dome','saddle','elliptic','local','mixed']){
+    const c=base();c.shape=shape;c.pinContactMode='all3';c.lift=2;c.warpage=.5;
+    c.localX=4;c.localY=3;c.localSigma=6;
+    const r=calculate(c,80);
+    assert.equal(r.pinContactCount,3,shape);
+    for(const gap of r.pinGaps)assert.ok(Math.abs(gap)<1e-9,shape+' '+gap);
+    assert.ok(Number.isFinite(r.minGap)&&Number.isFinite(r.offset),shape);
+  }
+});
+test('forced seating is reversible to original vertical-only support',()=>{
+  const c=base();c.shape='saddle';c.pinContactMode='auto';c.warpage=.5;
+  const original=calculate(c,80);
+  c.pinContactMode='all3';
+  const forced=calculate(c,80);
+  assert.equal(forced.pinContactCount,3);
+  assert.ok(forced.pinGaps.every(g=>Math.abs(g)<1e-9));
+  c.pinContactMode='auto';
+  const restored=calculate(c,80);
+  assert.equal(restored.offset,original.offset);
+  assert.equal(restored.tiltX,0);
+  assert.equal(restored.tiltY,0);
+});
+test('forced seating can flag stage interference instead of hiding it',()=>{
+  const c=base();c.shape='dome';c.lift=0;c.pinContactMode='all3';c.warpage=.5;
+  const r=calculate(c,120);
+  assert.equal(r.pinContactCount,3);
+  assert.ok(r.interference>0);
+  assert.ok(r.minGap<0);
+});
+test('zero pin radius cannot define a three-point support plane',()=>{
+  const c=base();c.pinRadius=0;c.pinContactMode='all3';
+  assert.ok(validate(c).length);
+});
